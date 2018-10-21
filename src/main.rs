@@ -182,8 +182,8 @@ impl Aggregate for Contract {
             },
             &CreditsAllocated {id, amount: _, timestamp} => {
                 let mut res = self.reservations.remove(&id).unwrap();
-                // res.allocated_time = Some(timestamp);
-                // self.allocations.insert(id, res);
+                res.allocated_time = Some(timestamp);
+                self.allocations.insert(id, res);
             },
             &ReservationCancelled(id, amount) => {
                 self.reservations.remove(&id);
