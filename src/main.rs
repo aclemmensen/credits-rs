@@ -44,23 +44,26 @@ trait Aggregate {
 pub struct Contract {
     id: i64,
     version: i64,
-    amount: i64,
+    amount: Amount,
+    spent: Amount,
     reservations: HashMap<Uuid, CreditReservation>,
     allocations: HashMap<Uuid, CreditReservation>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreditReservation {
-    amount: i64,
+    amount: Amount,
     created_time: Ts,
     allocated_time: Option<Ts>
 }
 
 #[derive(Debug)]
 pub enum CreditError {
-    NotEnoughMoney {has: i64, needs: i64},
+    NotEnoughMoney {has: Amount, needs: Amount},
     ReservationAlreadyExists,
     ReservationNotFound,
+    AllocationNotFound,
+
     ConcurrencyError,
     StorageError(postgres::error::Error),
     DataError(serde_json::Error)
@@ -68,28 +71,53 @@ pub enum CreditError {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum CreditEvent {
-    CreditsAdded(i64),
+    CreditsAdded(Amount),
     CreditsReserved { 
-        amount: i64,
+        amount: Amount,
         id: Uuid,
         timestamp: Ts
     },
     CreditsAllocated {
         id: Uuid,
-        amount: i64,
+        amount: Amount,
         timestamp: Ts
     },
-    ReservationCancelled(Uuid, i64),
-    ReservationExpired {id: Uuid, amount_freed: i64, new_total: i64}
+    ReservationCancelled(Uuid, Amount),
+    ReservationExpired {
+        id: Uuid,
+        amount_freed: Amount,
+        available: Amount
+    },
+    AllocationFreed {
+        id: Uuid,
+        amount: Amount,
+        available: Amount
+    },
+    ReservationSpent {
+        id: Uuid,
+        amount: Amount
+    }
 }
+
+type PersonId = i64;
+type Amount = i64;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum CreditCommand {
-    AddCredits(i64),
-    ReserveCredits(i64, Uuid),
+    // Add credits to account
+    AddCredits(Amount),
+    // Reserve an amount of credits
+    ReserveCredits(Amount, Uuid),
+    // Allocate credits reserved with a reservation
     AllocateCredits(Uuid),
+    // Cancel a reservation made previously
     CancelReservation(Uuid),
-    EvictExpiredReservations
+    // Clean up expired reservations older than the provided number of seconds
+    EvictExpiredReservations(i64),
+    // Free an allocation made previously
+    FreeAllocation(Uuid),
+    // Permanently spend credits
+    SpendReservation(Uuid)
 }
 
 impl Contract {
@@ -128,17 +156,17 @@ impl Contract {
         }
     }
 
-    fn evict_expired_resevations(&self) -> R {
+    fn evict_expired_resevations(&self, age: i64) -> R {
         let now = Utc::now();
-        let dur = Duration::minutes(5);
         let mut total_freed = 0;
+        let dur = Duration::seconds(age);
         let events: Vec<CreditEvent> = self.reservations.iter().filter_map(|(id, r)| {
             if (r.created_time+dur) < now {
                 total_freed += r.amount;
                 Some(ReservationExpired {
                     id: *id,
                     amount_freed: r.amount,
-                    new_total: self.amount + total_freed
+                    available: self.amount + total_freed
                 })
             } else {
                 None
@@ -146,6 +174,28 @@ impl Contract {
         }).collect();
         
         Ok(events)
+    }
+
+    fn free_allocation(&self, id: Uuid) -> R {
+        if let Some(res) = self.allocations.get(&id) {
+            return Ok(vec![AllocationFreed {
+                id,
+                amount: res.amount,
+                available: self.amount + res.amount
+            }]);
+        }
+
+        Err(CreditError::AllocationNotFound)
+    }
+
+    fn spend_reservation(&self, id: Uuid) -> R {
+        match self.reservations.get(&id) {
+            Some(res) => Ok(vec![ReservationSpent {
+                id,
+                amount: res.amount
+            }]),
+            None => Err(CreditError::ReservationNotFound)
+        }
     }
 }
 
@@ -168,7 +218,9 @@ impl Aggregate for Contract {
             &CreditCommand::ReserveCredits(amt, id) => self.reserve_credits(amt, id),
             &CreditCommand::AllocateCredits(id) => self.allocate_credits(id),
             &CreditCommand::CancelReservation(id) => self.cancel_reservation(id),
-            &CreditCommand::EvictExpiredReservations => self.evict_expired_resevations()
+            &CreditCommand::EvictExpiredReservations(age) => self.evict_expired_resevations(age),
+            &CreditCommand::FreeAllocation(id) => self.free_allocation(id),
+            &CreditCommand::SpendReservation(id) => self.spend_reservation(id)
         }
     }
 
@@ -187,12 +239,20 @@ impl Aggregate for Contract {
                 self.allocations.insert(id, res);
             },
             &ReservationCancelled(id, amount) => {
-                self.reservations.remove(&id);
+                self.reservations.remove(&id).unwrap();
                 self.amount += amount;
             },
-            &ReservationExpired {id, amount_freed, new_total: _} => {
-                self.reservations.remove(&id);
+            &ReservationExpired {id, amount_freed, available: _} => {
+                self.reservations.remove(&id).unwrap();
                 self.amount += amount_freed;
+            },
+            &AllocationFreed {id, amount, available: _} => {
+                self.amount += amount;
+                self.allocations.remove(&id).unwrap();
+            },
+            &ReservationSpent {id, amount: amt } => {
+                self.reservations.remove(&id).unwrap();
+                self.spent += amt;
             }
         };
     }
@@ -202,7 +262,7 @@ fn main2() -> Result<(), CreditError> {
     let pool = eventstore::pool();
     eventstore::init(pool.clone());
     let sw = Stopwatch::start_new();
-    let mut c = eventstore::load(3, &pool)?;
+    let mut c = eventstore::load(5, &pool)?;
     info!("Loaded agg in {} ms", sw.elapsed_ms());
 
     run_and_store(&mut c, CreditCommand::AddCredits(10000), &pool)?;
@@ -210,8 +270,9 @@ fn main2() -> Result<(), CreditError> {
         let uuid = Uuid::new_v4();
         let r = run_and_store_batch(&mut c, vec![
             CreditCommand::ReserveCredits(10, uuid),
-            CreditCommand::AllocateCredits(uuid),
-            CreditCommand::EvictExpiredReservations
+            // CreditCommand::AllocateCredits(uuid),
+            CreditCommand::SpendReservation(uuid),
+            CreditCommand::EvictExpiredReservations(60)
         ], &pool);
         match r {
             Ok(_) => {},
@@ -226,6 +287,46 @@ fn main2() -> Result<(), CreditError> {
     // println!("{:?}", c);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_is_empty_by_default() {
+        let c = Contract::default();
+        assert_eq!(c.amount, 0);
+        assert_eq!(c.id, 0);
+    }
+
+    #[test]
+    fn it_updates_amount() {
+        let c = with_amount(10);
+        assert_eq!(c.amount, 10);
+    }
+
+    #[test]
+    fn it_reserves_amount() {
+        let mut c = with_amount(10);
+        let id = Uuid::new_v4();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(5, id)).unwrap();
+        assert_eq!(c.amount, 5);
+    }
+
+    #[test]
+    fn it_cannot_reserve_too_much() {
+        let mut c = with_amount(10);
+        let id = Uuid::new_v4();
+        let r = run_cmd(&mut c, CreditCommand::ReserveCredits(20, id));
+        r.expect_err("should error out");
+    }
+
+    fn with_amount(amount: Amount) -> Contract {
+        let mut c = Contract::default();
+        run_cmd(&mut c, CreditCommand::AddCredits(amount)).unwrap();
+        c
+    }
 }
 
 #[allow(unused)]
