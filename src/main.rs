@@ -73,8 +73,8 @@ pub enum CreditError {
 pub enum CreditEvent {
     CreditsAdded(Amount),
     CreditsReserved { 
-        amount: Amount,
         id: Uuid,
+        amount: Amount,
         timestamp: Ts
     },
     CreditsAllocated {
@@ -107,7 +107,7 @@ pub enum CreditCommand {
     // Add credits to account
     AddCredits(Amount),
     // Reserve an amount of credits
-    ReserveCredits(Amount, Uuid),
+    ReserveCredits(Uuid, Amount),
     // Allocate credits reserved with a reservation
     AllocateCredits(Uuid),
     // Cancel a reservation made previously
@@ -215,7 +215,7 @@ impl Aggregate for Contract {
     fn handle(&self, cmd: &Self::Cmd) -> Result<Vec<Self::Item>, Self::Error> {
         match cmd {
             &CreditCommand::AddCredits(amt) => self.add_credits(amt),
-            &CreditCommand::ReserveCredits(amt, id) => self.reserve_credits(amt, id),
+            &CreditCommand::ReserveCredits(id, amt) => self.reserve_credits(amt, id),
             &CreditCommand::AllocateCredits(id) => self.allocate_credits(id),
             &CreditCommand::CancelReservation(id) => self.cancel_reservation(id),
             &CreditCommand::EvictExpiredReservations(age) => self.evict_expired_resevations(age),
@@ -269,7 +269,7 @@ fn main2() -> Result<(), CreditError> {
     loop {
         let uuid = Uuid::new_v4();
         let r = run_and_store_batch(&mut c, vec![
-            CreditCommand::ReserveCredits(10, uuid),
+            CreditCommand::ReserveCredits(uuid, 10),
             // CreditCommand::AllocateCredits(uuid),
             CreditCommand::SpendReservation(uuid),
             CreditCommand::EvictExpiredReservations(60)
@@ -310,7 +310,7 @@ mod tests {
     fn it_reserves_amount() {
         let mut c = with_amount(10);
         let id = Uuid::new_v4();
-        run_cmd(&mut c, CreditCommand::ReserveCredits(5, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(id, 5)).unwrap();
         assert_eq!(c.amount, 5);
     }
 
@@ -318,7 +318,7 @@ mod tests {
     fn it_cannot_reserve_too_much() {
         let mut c = with_amount(10);
         let id = Uuid::new_v4();
-        let r = run_cmd(&mut c, CreditCommand::ReserveCredits(20, id));
+        let r = run_cmd(&mut c, CreditCommand::ReserveCredits(id, 20));
         r.expect_err("should error out");
     }
 
@@ -326,7 +326,7 @@ mod tests {
     fn it_spends_what_is_available() {
         let mut c = with_amount(10);
         let id = Uuid::new_v4();
-        run_cmd(&mut c, CreditCommand::ReserveCredits(10, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(id, 10)).unwrap();
         run_cmd(&mut c, CreditCommand::SpendReservation(id)).unwrap();
         assert_eq!(c.amount, 0);
         assert_eq!(c.spent, 10);
@@ -336,7 +336,7 @@ mod tests {
     fn it_cannot_respend() {
         let mut c = with_amount(10);
         let id = Uuid::new_v4();
-        run_cmd(&mut c, CreditCommand::ReserveCredits(5, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(id, 5)).unwrap();
         run_cmd(&mut c, CreditCommand::SpendReservation(id)).unwrap();
         run_cmd(&mut c, CreditCommand::SpendReservation(id))
             .expect_err("should not allow respend");
@@ -346,7 +346,7 @@ mod tests {
     fn it_frees_reservation() {
         let mut c = with_amount(10);
         let id = Uuid::new_v4();
-        run_cmd(&mut c, CreditCommand::ReserveCredits(5, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(id, 5)).unwrap();
         run_cmd(&mut c, CreditCommand::CancelReservation(id)).unwrap();
         assert_eq!(c.amount, 10);
     }
@@ -355,7 +355,7 @@ mod tests {
     fn cancelled_reservation_cannot_be_allocated() {
         let mut c = with_amount(10);
         let id = Uuid::new_v4();
-        run_cmd(&mut c, CreditCommand::ReserveCredits(5, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(id, 5)).unwrap();
         run_cmd(&mut c, CreditCommand::CancelReservation(id)).unwrap();
         run_cmd(&mut c, CreditCommand::AllocateCredits(id))
             .expect_err("should not allow allocation");        
@@ -365,7 +365,7 @@ mod tests {
     fn spent_reservation_cannot_be_allocated() {
         let mut c = with_amount(10);
         let id = Uuid::new_v4();
-        run_cmd(&mut c, CreditCommand::ReserveCredits(5, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(id, 5)).unwrap();
         run_cmd(&mut c, CreditCommand::SpendReservation(id)).unwrap();
         run_cmd(&mut c, CreditCommand::AllocateCredits(id))
             .expect_err("should not allow allocation");        
@@ -390,7 +390,7 @@ fn benchmark() {
     loop {
         let id = Uuid::new_v4();
 
-        if let Ok(evts) = run_cmd(&mut a, CreditCommand::ReserveCredits(10, id)) {
+        if let Ok(evts) = run_cmd(&mut a, CreditCommand::ReserveCredits(id, 10)) {
             all_events.extend(evts);
             if let Ok(evts2) = run_cmd(&mut a, CreditCommand::AllocateCredits(id)) {
                 all_events.extend(evts2);
