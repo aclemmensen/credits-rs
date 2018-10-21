@@ -322,6 +322,55 @@ mod tests {
         r.expect_err("should error out");
     }
 
+    #[test]
+    fn it_spends_what_is_available() {
+        let mut c = with_amount(10);
+        let id = Uuid::new_v4();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(10, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::SpendReservation(id)).unwrap();
+        assert_eq!(c.amount, 0);
+        assert_eq!(c.spent, 10);
+    }
+
+    #[test]
+    fn it_cannot_respend() {
+        let mut c = with_amount(10);
+        let id = Uuid::new_v4();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(5, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::SpendReservation(id)).unwrap();
+        run_cmd(&mut c, CreditCommand::SpendReservation(id))
+            .expect_err("should not allow respend");
+    }
+
+    #[test]
+    fn it_frees_reservation() {
+        let mut c = with_amount(10);
+        let id = Uuid::new_v4();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(5, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::CancelReservation(id)).unwrap();
+        assert_eq!(c.amount, 10);
+    }
+
+    #[test]
+    fn cancelled_reservation_cannot_be_allocated() {
+        let mut c = with_amount(10);
+        let id = Uuid::new_v4();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(5, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::CancelReservation(id)).unwrap();
+        run_cmd(&mut c, CreditCommand::AllocateCredits(id))
+            .expect_err("should not allow allocation");        
+    }
+
+    #[test]
+    fn spent_reservation_cannot_be_allocated() {
+        let mut c = with_amount(10);
+        let id = Uuid::new_v4();
+        run_cmd(&mut c, CreditCommand::ReserveCredits(5, id)).unwrap();
+        run_cmd(&mut c, CreditCommand::SpendReservation(id)).unwrap();
+        run_cmd(&mut c, CreditCommand::AllocateCredits(id))
+            .expect_err("should not allow allocation");        
+    }
+
     fn with_amount(amount: Amount) -> Contract {
         let mut c = Contract::default();
         run_cmd(&mut c, CreditCommand::AddCredits(amount)).unwrap();
