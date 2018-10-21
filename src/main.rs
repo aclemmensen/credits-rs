@@ -7,9 +7,12 @@ extern crate r2d2;
 extern crate r2d2_postgres;
 extern crate chrono;
 extern crate dotenv;
-
+#[macro_use]
+extern crate log;
+extern crate env_logger;
 #[macro_use]
 extern crate serde_derive;
+
 use std::collections::HashMap;
 use stopwatch::Stopwatch;
 use uuid::prelude::*;
@@ -42,12 +45,14 @@ pub struct Contract {
     version: i64,
     amount: i64,
     reservations: HashMap<Uuid, CreditReservation>,
+    allocations: HashMap<Uuid, CreditReservation>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreditReservation {
     amount: i64,
-    created_time: Ts
+    created_time: Ts,
+    allocated_time: Option<Ts>
 }
 
 #[derive(Debug)]
@@ -68,7 +73,11 @@ pub enum CreditEvent {
         id: Uuid,
         timestamp: Ts
     },
-    CreditsAllocated {id: Uuid, amount: i64 },
+    CreditsAllocated {
+        id: Uuid,
+        amount: i64,
+        timestamp: Ts
+    },
     ReservationCancelled(Uuid, i64),
     ReservationExpired {id: Uuid, amount_freed: i64, new_total: i64}
 }
@@ -102,7 +111,11 @@ impl Contract {
 
     fn allocate_credits(&self, id: Uuid) -> R {
         match self.reservations.get(&id) {
-            Some(res) => Ok(vec![CreditsAllocated {id, amount: res.amount}]),
+            Some(res) => Ok(vec![CreditsAllocated {
+                id,
+                amount: res.amount,
+                timestamp: Utc::now()
+            }]),
             None => Err(CreditError::ReservationNotFound)
         }
     }
@@ -164,11 +177,13 @@ impl Aggregate for Contract {
         match evt {
             CreditsAdded(v) => self.amount += v,
             &CreditsReserved { id, amount, timestamp } => {
-                self.reservations.insert(id, CreditReservation { amount, created_time: timestamp });
+                self.reservations.insert(id, CreditReservation { amount, created_time: timestamp, allocated_time: None });
                 self.amount -= amount;
             },
-            &CreditsAllocated {id, amount: _} => {
-                self.reservations.remove(&id);
+            &CreditsAllocated {id, amount: _, timestamp} => {
+                let mut res = self.reservations.remove(&id).unwrap();
+                // res.allocated_time = Some(timestamp);
+                // self.allocations.insert(id, res);
             },
             &ReservationCancelled(id, amount) => {
                 self.reservations.remove(&id);
@@ -208,20 +223,18 @@ fn run_and_store_batch(c: &mut Contract, cmds: Vec<CreditCommand>, pool: &MyPool
         all_evts.extend(evts);
     }
     let current_version = c.version();
-    eventstore::save_events(pool, c.id(), expected_version, current_version, all_evts)?;
+    eventstore::save_events(pool, c.id(), expected_version, current_version, c, all_evts)?;
     Ok(())
 }
 
 fn main2() -> Result<(), CreditError> {
     let pool = eventstore::pool();
     eventstore::init(pool.clone());
-    let mut c = Contract::default();
-    c.id = 3;
     let sw = Stopwatch::start_new();
-    eventstore::load_into(&mut c, &pool)?;
-    run_and_store(&mut c, CreditCommand::AddCredits(1000), &pool)?;
-    println!("Loaded in {}", sw.elapsed_ms());
+    let mut c = eventstore::load(3, &pool)?;
+    info!("Loaded agg in {} ms", sw.elapsed_ms());
 
+    run_and_store(&mut c, CreditCommand::AddCredits(10000), &pool)?;
     loop {
         let uuid = Uuid::new_v4();
         let r = run_and_store_batch(&mut c, vec![
@@ -232,21 +245,21 @@ fn main2() -> Result<(), CreditError> {
         match r {
             Ok(_) => {},
             Err(e) => {
-                println!("Error: {:?}", e);
+                error!("Error: {:?}", e);
                 break;
             }
         }
         
     }
 
-    println!("{:?}", c);
+    // println!("{:?}", c);
 
     Ok(())
 }
 
 #[allow(dead_code)]
 fn benchmark() {
-    let seed = CreditsAdded(10000);
+    let seed = CreditsAdded(10000000);
     
     let mut a: Contract = Contract::default();
     a.apply(&seed);
@@ -279,6 +292,7 @@ fn benchmark() {
 }
 
 fn main() {
+    env_logger::init();
     main2().unwrap();
-    return;
+    // benchmark();
 }
