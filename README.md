@@ -25,3 +25,16 @@ Run the program:
 export RUST_LOG=credits=info
 cargo run --release
 ```
+
+## Concepts
+
+Aggregates are containers for state and embed business logic. They are responsible for ensuring
+only valid state changes happen. They fully contain their state but emit events describing state
+changes that others may depend upon.
+
+Any state change is carried out through four stages:
+
+- Command describing your intent (imperative)
+- Event describing the effect of said change (past participle)
+- Handler function carries out validation and creates one or more events
+- Apply function that carries out the local state change in response to events 
