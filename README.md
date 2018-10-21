@@ -8,17 +8,20 @@ Start a Postgres DB if you don't have one:
 
 ```sh
 mkdir data
-docker run --name postgres --net=host -d -e POSTGRES_PASSWORD=credits -e POSTGRES_USER=credits -e PGDATA=/data -v $(pwd):/data -e POSTGRES_DB=credits postgres:11
-```
-
-Enable logging:
-
-```sh
-export RUST_LOG=credits=info
+docker run -d \
+  --name postgres \
+  --net=host \
+  -e POSTGRES_PASSWORD=credits \
+  -e POSTGRES_USER=credits \
+  -e PGDATA=/data \
+  -v $(pwd):/data \
+  -e POSTGRES_DB=credits\
+   postgres:11
 ```
 
 Run the program:
 
 ```sh
+export RUST_LOG=credits=info
 cargo run --release
 ```
