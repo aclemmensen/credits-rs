@@ -23,6 +23,7 @@ use r2d2_postgres::PostgresConnectionManager;
 use CreditEvent::*;
 
 mod eventstore;
+use eventstore::{run_and_store, run_and_store_batch, run_cmd};
 
 type R = Result<Vec<CreditEvent>, CreditError>;
 type MyPool = Pool<PostgresConnectionManager>;
@@ -197,36 +198,6 @@ impl Aggregate for Contract {
     }
 }
 
-fn run_cmd(c: &mut Contract, cmd: CreditCommand) -> Result<Vec<CreditEvent>, CreditError> {
-    let res = c.handle(&cmd);
-    match res {
-        Ok(evts) => {
-            for e in evts.iter() {
-                c.apply(e);
-            }
-            Ok(evts)
-        },
-        Err(e) => Err(e)
-    }
-}
-
-#[allow(unused)]
-fn run_and_store(c: &mut Contract, cmd: CreditCommand, pool: &MyPool) -> Result<(), CreditError> {
-    run_and_store_batch(c, vec![cmd], pool)
-}
-
-fn run_and_store_batch(c: &mut Contract, cmds: Vec<CreditCommand>, pool: &MyPool) -> Result<(), CreditError> {
-    let expected_version = c.version();
-    let mut all_evts = vec![];
-    for cmd in cmds.into_iter() {
-        let evts = run_cmd(c, cmd)?;
-        all_evts.extend(evts);
-    }
-    let current_version = c.version();
-    eventstore::save_events(pool, c.id(), expected_version, current_version, c, all_evts)?;
-    Ok(())
-}
-
 fn main2() -> Result<(), CreditError> {
     let pool = eventstore::pool();
     eventstore::init(pool.clone());
@@ -257,7 +228,7 @@ fn main2() -> Result<(), CreditError> {
     Ok(())
 }
 
-#[allow(dead_code)]
+#[allow(unused)]
 fn benchmark() {
     let seed = CreditsAdded(10000000);
     

@@ -1,10 +1,11 @@
 use r2d2_postgres::{PostgresConnectionManager, TlsMode};
 use r2d2::Pool;
-use {MyPool, CreditEvent, CreditError, Contract, Aggregate};
+use {MyPool, CreditEvent, CreditError, Contract, Aggregate, CreditCommand};
 use serde_json;
 use postgres::error;
 use std::env;
 use dotenv;
+use Stopwatch;
 
 pub fn init(pool: MyPool) -> () {
     let conn = pool.get().unwrap();
@@ -149,4 +150,37 @@ pub fn pool() -> MyPool {
     let manager = PostgresConnectionManager::new(url, TlsMode::None).unwrap();
     let pool = Pool::new(manager).unwrap();
     pool
+}
+
+pub fn run_cmd(c: &mut Contract, cmd: CreditCommand) -> Result<Vec<CreditEvent>, CreditError> {
+    let res = c.handle(&cmd);
+    match res {
+        Ok(evts) => {
+            for e in evts.iter() {
+                c.apply(e);
+            }
+            Ok(evts)
+        },
+        Err(e) => Err(e)
+    }
+}
+
+#[allow(unused)]
+pub fn run_and_store(c: &mut Contract, cmd: CreditCommand, pool: &MyPool) -> Result<(), CreditError> {
+    run_and_store_batch(c, vec![cmd], pool)
+}
+
+pub fn run_and_store_batch(c: &mut Contract, cmds: Vec<CreditCommand>, pool: &MyPool) -> Result<(), CreditError> {
+    let expected_version = c.version();
+    let mut all_evts = vec![];
+    for cmd in cmds.into_iter() {
+        let evts = run_cmd(c, cmd)?;
+        all_evts.extend(evts);
+    }
+    let current_version = c.version();
+    let sw = Stopwatch::start_new();
+    let event_count = all_evts.len();
+    save_events(pool, c.id(), expected_version, current_version, c, all_evts)?;
+    debug!("stored {} events in {}", event_count, sw.elapsed_ms());
+    Ok(())
 }
