@@ -17,6 +17,8 @@ struct CreditsSvc {
 }
 
 impl CreditsSvc {
+    // helper that takes care of some of the boilerplate stuff around
+    // handling grpc requests and responses
     fn doit<Treq, Tresp, F>(&mut self, ctx: RpcContext, req: Treq, sink: UnarySink<Tresp>, mut act: F) where
         Treq : ::protobuf::Message,
         Tresp : ::protobuf::Message,

@@ -7,7 +7,7 @@ use std::env;
 use dotenv;
 use Stopwatch;
 
-pub fn init(pool: MyPool) -> () {
+pub fn init(pool: &MyPool) -> () {
     let conn = pool.get().unwrap();
     conn.batch_execute("
         create table if not exists events (
@@ -29,6 +29,7 @@ pub fn init(pool: MyPool) -> () {
         create table if not exists snapshots (
             id bigint primary key,
             v bigint not null,
+            ts timestamp default current_timestamp,
             snapshot text not null
         );").unwrap();
 }

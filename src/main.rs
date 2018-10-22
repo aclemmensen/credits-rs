@@ -268,7 +268,7 @@ impl Aggregate for Contract {
 
 fn main2() -> Result<(), CreditError> {
     let pool = eventstore::pool();
-    eventstore::init(pool.clone());
+    eventstore::init(&pool);
     let sw = Stopwatch::start_new();
     let mut c = eventstore::load(5, &pool)?;
     info!("Loaded agg in {} ms", sw.elapsed_ms());
@@ -423,6 +423,7 @@ fn benchmark() {
 fn main() {
     env_logger::init();
     let pool = eventstore::pool();
+    eventstore::init(&pool);
     let svc = server::start_server(pool);
     // main2().unwrap();
     // benchmark();

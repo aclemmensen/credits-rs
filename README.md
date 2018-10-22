@@ -26,6 +26,12 @@ export RUST_LOG=credits=info
 cargo run --release
 ```
 
+This will start the gRPC server running on port 5951. You can access it with grpcc like so:
+
+```sh
+make grpcc
+```
+
 ## Concepts
 
 Aggregates are containers for state and embed business logic. They are responsible for ensuring
