@@ -13,7 +13,7 @@ use {CreditCommand, CreditError};
 
 #[derive(Clone)]
 struct CreditsSvc {
-    pool: Arc<MyPool>
+    pool: MyPool
 }
 
 impl CreditsSvc {
@@ -62,7 +62,7 @@ impl Credits for CreditsSvc {
 pub fn start_server(pool: MyPool) {
     let env = Arc::new(Environment::new(1));
     let implementation = CreditsSvc {
-        pool: Arc::new(pool)
+        pool: pool
     };
 
     let service = create_credits(implementation);
