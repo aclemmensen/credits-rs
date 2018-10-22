@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+service Credits {
+    rpc GetAccountStatus(AccountStatusRequest) returns (AccountStatus) {}
+    rpc AddCredits(AddCreditsCommand) returns (AddCreditsResponse) {}
+}
+
+message AddCreditsCommand {
+    int64 account = 1;
+    int64 amount = 2;
+}
+
+message AddCreditsResponse {
+    int64 new_amount = 1;
+}
+
+message AccountStatusRequest {
+    int64 account = 1;
+}
+
+message AccountStatus {
+    int64 amount = 1;
+}

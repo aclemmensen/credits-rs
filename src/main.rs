@@ -12,7 +12,14 @@ extern crate log;
 extern crate env_logger;
 #[macro_use]
 extern crate serde_derive;
+extern crate grpcio;
+extern crate protobuf;
+extern crate futures;
 
+mod credits;
+mod credits_grpc;
+
+use std::io;
 use std::collections::HashMap;
 use stopwatch::Stopwatch;
 use uuid::prelude::*;
@@ -22,6 +29,7 @@ use r2d2::Pool;
 use r2d2_postgres::PostgresConnectionManager;
 use CreditEvent::*;
 
+mod server;
 mod eventstore;
 use eventstore::{run_and_store, run_and_store_batch, run_cmd};
 
@@ -414,6 +422,8 @@ fn benchmark() {
 
 fn main() {
     env_logger::init();
-    main2().unwrap();
+    let pool = eventstore::pool();
+    let svc = server::start_server(pool);
+    // main2().unwrap();
     // benchmark();
 }
